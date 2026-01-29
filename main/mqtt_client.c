@@ -283,7 +283,7 @@ void send_mqtt_telemetry(bme680_data_t *bme_data, float rainfall_mm, float wind_
             ESP_LOGI(TAG, "💧 HUMEDAD: %.2f %%", bme_data->humidity);
             ESP_LOGI(TAG, "📊 PRESIÓN: %.2f hPa", bme_data->pressure);
             ESP_LOGI(TAG, "🌀 GAS: %lu Ω", (unsigned long)bme_data->gas_resistance);
-            ESP_LOGI(TAG, "🌬️  CALIDAD AIRE: %.2f /100", bme_data->air_quality);
+            ESP_LOGI(TAG, "🌬️  CALIDAD AIRE: %.2f AQI", bme_data->air_quality);
             ESP_LOGI(TAG, "🌧️  LLUVIA: %.2f mm", rainfall_mm);
             ESP_LOGI(TAG, "💨 VIENTO: %.2f m/s (%.2f km/h)", 
                      wind_speed_ms, wind_speed_ms * 3.6);

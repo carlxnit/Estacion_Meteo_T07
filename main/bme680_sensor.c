@@ -517,13 +517,11 @@ static float bme680_compensate_humidity(uint16_t hum_adc) {
     var3 = (float)bme680_dev.calib.par_h6 / 16384.0;
     var4 = (float)bme680_dev.calib.par_h7 / 2097152.0;
     var5 = var2 + (var3 + var4 * temp_comp) * var2 * var2;
-    const float HUMIDITY_CAL_FACTOR = 1.33f;
-    float calibrated_humidity = var5 * HUMIDITY_CAL_FACTOR;
+ 
+    if (var5> 100.0) var5 = 100.0;
+    if (var5 < 0.0) var5 = 0.0;
     
-    if (calibrated_humidity > 100.0) calibrated_humidity = 100.0;
-    if (calibrated_humidity < 0.0) calibrated_humidity = 0.0;
-    
-    return calibrated_humidity;
+    return var5;
 }
 
 static uint32_t bme680_compensate_gas(uint16_t gas_adc, uint8_t gas_range) {
@@ -610,7 +608,40 @@ static float bme680_calculate_air_quality(uint32_t gas_resistance, float humidit
     
     ESP_LOGI(TAG, "  Calidad final: %.1f%%", quality);
     
-    return quality;
+   float aqi;
+    
+ 	if (quality >= 90.0f) {
+        aqi = 50.0f - ((quality - 90.0f) * 5.0f);
+        // QUITAR %% después de %.1f
+        ESP_LOGI(TAG, "Calidad: %.1f%% → Rango Excelente → AQI: %.1f", quality, aqi);
+    }
+    else if (quality >= 70.0f) {
+        aqi = 100.0f - ((quality - 70.0f) * 2.45f);
+        // QUITAR %% después de %.1f
+        ESP_LOGI(TAG, "Calidad: %.1f%% → Rango Bueno → AQI: %.1f", quality, aqi);
+    }
+    else if (quality >= 40.0f) {
+        aqi = 150.0f - ((quality - 40.0f) * 1.633f);
+        ESP_LOGI(TAG, "Calidad: %.1f%% → Rango Moderado → AQI: %.1f", quality, aqi);
+    }
+    else if (quality >= 20.0f) {
+        aqi = 200.0f - ((quality - 20.0f) * 2.45f);
+        ESP_LOGI(TAG, "Calidad: %.1f%% → Rango Malo → AQI: %.1f", quality, aqi);
+    }
+    else if (quality >= 10.0f) {
+        aqi = 300.0f - ((quality - 10.0f) * 9.9f);
+        ESP_LOGI(TAG, "Calidad: %.1f%% → Rango Muy malo → AQI: %.1f", quality, aqi);
+    }
+    else {
+        aqi = 500.0f - (quality * 19.9f);
+        ESP_LOGI(TAG, "Calidad: %.1f%% → Rango Peligroso → AQI: %.1f", quality, aqi);
+    }
+    
+    // Asegurar que esté dentro de 0-500
+    if (aqi < 0.0f) aqi = 0.0f;
+    if (aqi > 500.0f) aqi = 500.0f;
+    
+    return aqi;
 }
 
 // ==================== CONFIGURACIÓN MEJORADA ====================

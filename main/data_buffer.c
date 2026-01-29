@@ -607,13 +607,13 @@ bool data_buffer_send_stored_readings(void) {
         // JSON compacto (menos campos, sin metadata innecesaria para envio rapido)
         int len = snprintf(json_message, sizeof(json_message),
             "{\"ts\":%" PRIu64 ","
-            "\"t\":%.2f,"      // temperature
-            "\"h\":%.2f,"      // humidity
-            "\"p\":%.2f,"      // pressure
-            "\"g\":%" PRIu32 ","  // gas_resistance
-            "\"aq\":%.2f,"     // air_quality
-            "\"r\":%.2f,"      // rainfall_mm
-            "\"w\":%.2f,"      // wind_speed_ms
+            "\"temperature\":%.2f,"      // temperature
+            "\"humidity\":%.2f,"      // humidity
+            "\"pressure\":%.2f,"      // pressure
+            "\"gas_resistance\":%" PRIu32 ","  // gas_resistance
+            "\"air_quality\":%.2f,"     // air_quality
+            "\"rainfall_mm\":%.2f,"      // rainfall_mm
+            "\"wind_speed_ms\":%.2f,"      // wind_speed_ms
             "\"st\":true,"     // stored
             "\"rm\":\"fast\"," // rapid_mode flag
             "\"idx\":%" PRIu16 ","      // buffer_index

@@ -93,7 +93,7 @@
 // Calibración BME680 (ajustes de escala y offset)
 #define BME680_TEMP_SCALE         1.0f             // Factor escala temperatura
 #define BME680_TEMP_OFFSET_C      0.0f             // Offset temperatura (°C)
-#define BME680_HUM_SCALE          1.0f             // Factor escala humedad
+#define BME680_HUM_SCALE          1.4f             // Factor escala humedad
 #define BME680_HUM_OFFSET_PCT     0.0f             // Offset humedad (%)
 
 // =============================================================================
