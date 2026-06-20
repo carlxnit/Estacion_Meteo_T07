@@ -77,7 +77,7 @@
 // Calibración Anemómetro (voltaje → m/s)
 #define ANEMOMETRO_MIN_VOLTAGE    0.5f             // Voltaje mínimo (0 m/s)
 #define ANEMOMETRO_MAX_VOLTAGE    2.8f             // Voltaje máximo
-#define ANEMOMETRO_MAX_MS         20.0f            // Velocidad máxima en m/s
+#define ANEMOMETRO_MAX_MS         50.0f            // Velocidad máxima en m/s
 
 // =============================================================================
 // CONFIGURACIÓN HARDWARE - BME680 (SENSOR I2C)
