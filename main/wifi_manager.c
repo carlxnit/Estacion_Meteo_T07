@@ -89,6 +89,34 @@ static bool load_wifi_credentials(char* ssid, size_t ssid_size, char* password, 
 }
 
 /**
+ * @brief Callback del timer de reinicio diferido tras probar credenciales nuevas
+ */
+static void restart_timer_cb(void *arg) {
+    ESP_LOGI(TAG, "🔁 Conexión confirmada tras probar credenciales nuevas. Reiniciando...");
+    esp_restart();
+}
+
+/**
+ * @brief Programa un esp_restart() pasados delay_ms, sin bloquear el manejador de eventos
+ */
+static void schedule_restart_after_test(uint32_t delay_ms) {
+    static esp_timer_handle_t restart_timer = NULL;
+
+    if (restart_timer != NULL) {
+        // Ya hay un reinicio programado (p.ej. conexiones GOT_IP repetidas); no duplicar
+        return;
+    }
+
+    const esp_timer_create_args_t timer_args = {
+        .callback = &restart_timer_cb,
+        .name = "wifi_restart",
+    };
+    if (esp_timer_create(&timer_args, &restart_timer) == ESP_OK) {
+        esp_timer_start_once(restart_timer, (uint64_t)delay_ms * 1000);
+    }
+}
+
+/**
  * @brief Genera SSID único para el AP
  */
 static void generate_ap_ssid(void) {
@@ -143,6 +171,15 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
         // desde el portal: ahí lo necesitamos vivo para servir /status y /restart
         if (!s_testing_new_credentials && web_server_is_running()) {
             web_server_stop();
+        }
+
+        // Si estábamos probando credenciales nuevas, no nos quedamos en modo
+        // APSTA permanentemente (es inestable: el radio único reparte tiempo
+        // entre el AP propio y la STA real y acaba provocando desconexiones).
+        // Reiniciamos solos a los pocos segundos, sin depender de que el
+        // navegador llegue a llamar a /restart.
+        if (s_testing_new_credentials) {
+            schedule_restart_after_test(4000);
         }
 
         if (s_wifi_event_group) {
