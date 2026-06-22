@@ -6,6 +6,9 @@ static EventGroupHandle_t s_wifi_event_group;
 static int wifi_conectado = 0;
 static bool credentials_failed = false;
 static char ap_ssid[32];
+static esp_netif_t *s_sta_netif = NULL;
+static int s_retry_num = 0;
+static bool s_testing_new_credentials = false;
 
 #define WIFI_CONNECTED_BIT BIT0
 #define WIFI_FAIL_BIT      BIT1
@@ -98,51 +101,50 @@ static void generate_ap_ssid(void) {
 /**
  * @brief Manejador de eventos WiFi
  */
-static void wifi_event_handler(void* arg, esp_event_base_t event_base, 
+static void wifi_event_handler(void* arg, esp_event_base_t event_base,
                               int32_t event_id, void* event_data) {
-    static int retry_num = 0;
-    
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
         ESP_LOGI(TAG, "📡 WiFi iniciado - Conectando...");
         esp_wifi_connect();
-    } 
+    }
     else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
         wifi_conectado = 0;
-        
+
         wifi_event_sta_disconnected_t* disconnected = (wifi_event_sta_disconnected_t*) event_data;
         ESP_LOGE(TAG, "❌ WiFi desconectado. Razón: %d", disconnected->reason);
-        
+
         // Detectar fallo de credenciales
-        if (disconnected->reason == WIFI_REASON_AUTH_EXPIRE || 
-            disconnected->reason == WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT || 
+        if (disconnected->reason == WIFI_REASON_AUTH_EXPIRE ||
+            disconnected->reason == WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT ||
             disconnected->reason == WIFI_REASON_AUTH_FAIL) {
             ESP_LOGW(TAG, "🔐 Credenciales incorrectas!");
             credentials_failed = true;
         }
-        
-        if (retry_num < MAX_INTENTOS && !credentials_failed) {
+
+        if (s_retry_num < MAX_INTENTOS && !credentials_failed) {
             esp_wifi_connect();
-            retry_num++;
-            ESP_LOGI(TAG, "🔄 Reintento WiFi %d/%d", retry_num, MAX_INTENTOS);
+            s_retry_num++;
+            ESP_LOGI(TAG, "🔄 Reintento WiFi %d/%d", s_retry_num, MAX_INTENTOS);
         } else {
             ESP_LOGE(TAG, "⏹️ Fallo permanente WiFi");
             if (s_wifi_event_group) {
                 xEventGroupSetBits(s_wifi_event_group, WIFI_FAIL_BIT);
             }
         }
-    } 
+    }
     else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         wifi_conectado = 1;
         credentials_failed = false;
         ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
         ESP_LOGI(TAG, "✅ WiFi conectado! IP: " IPSTR, IP2STR(&event->ip_info.ip));
-        retry_num = 0;
-        
-        // Detener servidor web si está corriendo
-        if (web_server_is_running()) {
+        s_retry_num = 0;
+
+        // Detener servidor web salvo que estemos probando credenciales nuevas
+        // desde el portal: ahí lo necesitamos vivo para servir /status y /restart
+        if (!s_testing_new_credentials && web_server_is_running()) {
             web_server_stop();
         }
-        
+
         if (s_wifi_event_group) {
             xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
         }
@@ -335,6 +337,7 @@ void wifi_init_sta(void) {
     esp_netif_t *sta_netif = esp_netif_create_default_wifi_sta();
     esp_netif_t *ap_netif = esp_netif_create_default_wifi_ap();
     assert(sta_netif && ap_netif);
+    s_sta_netif = sta_netif;
     
     // Configurar WiFi
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
@@ -359,11 +362,13 @@ void wifi_init_sta(void) {
     EventBits_t bits = xEventGroupWaitBits(s_wifi_event_group,
             WIFI_CONNECTED_BIT | WIFI_FAIL_BIT,
             pdFALSE, pdFALSE, pdMS_TO_TICKS(30000));
-    
-    // Limpiar manejadores
-    ESP_ERROR_CHECK(esp_event_handler_instance_unregister(IP_EVENT, IP_EVENT_STA_GOT_IP, instance_got_ip));
-    ESP_ERROR_CHECK(esp_event_handler_instance_unregister(WIFI_EVENT, ESP_EVENT_ANY_ID, instance_any_id));
-    
+
+    // Los manejadores de eventos quedan registrados permanentemente: se
+    // necesitan despues para detectar la conexion al probar credenciales
+    // nuevas desde el portal de configuracion (ver wifi_try_connect_async)
+    (void)instance_got_ip;
+    (void)instance_any_id;
+
     if (s_wifi_event_group) {
         vEventGroupDelete(s_wifi_event_group);
         s_wifi_event_group = NULL;
@@ -402,4 +407,81 @@ bool wifi_is_ap_mode(void) {
 
 const char* wifi_get_ap_ssid(void) {
     return ap_ssid;
+}
+
+bool wifi_get_sta_ip(char *buf, size_t len) {
+    if (!s_sta_netif || !buf || len == 0) {
+        return false;
+    }
+
+    esp_netif_ip_info_t ip_info;
+    if (esp_netif_get_ip_info(s_sta_netif, &ip_info) != ESP_OK || ip_info.ip.addr == 0) {
+        return false;
+    }
+
+    snprintf(buf, len, IPSTR, IP2STR(&ip_info.ip));
+    return true;
+}
+
+/**
+ * @brief Prueba credenciales nuevas en modo APSTA sin tirar el portal de
+ *        configuracion, para poder confirmar la conexion antes de reiniciar.
+ */
+void wifi_try_connect_async(const char *ssid, const char *password) {
+    if (!ssid || strlen(ssid) == 0) {
+        return;
+    }
+
+    ESP_LOGI(TAG, "🔄 Probando nuevas credenciales WiFi: '%s'", ssid);
+    s_testing_new_credentials = true;
+    credentials_failed = false;
+    s_retry_num = 0;
+    wifi_conectado = 0;
+
+    esp_wifi_stop();
+    vTaskDelay(100 / portTICK_PERIOD_MS);
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));
+
+    // Reconfigurar el AP para no perder el portal mientras probamos la STA
+    wifi_config_t ap_config = {
+        .ap = {
+            .ssid = "",
+            .ssid_len = 0,
+            .channel = 1,
+            .password = AP_PASSWORD,
+            .max_connection = 4,
+            .authmode = WIFI_AUTH_WPA_WPA2_PSK,
+            .pmf_cfg = {
+                .required = true,
+            },
+        },
+    };
+    strncpy((char*)ap_config.ap.ssid, ap_ssid, sizeof(ap_config.ap.ssid));
+    ap_config.ap.ssid_len = strlen(ap_ssid);
+    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap_config));
+
+    wifi_config_t sta_config = {0};
+    size_t ssid_len = strlen(ssid);
+    if (ssid_len > 32) ssid_len = 32;
+    memcpy(sta_config.sta.ssid, ssid, ssid_len);
+
+    size_t pass_len = strlen(password ? password : "");
+    if (pass_len > 64) pass_len = 64;
+    if (password) memcpy(sta_config.sta.password, password, pass_len);
+
+    sta_config.sta.threshold.authmode = (pass_len == 0) ? WIFI_AUTH_OPEN : WIFI_AUTH_WPA2_PSK;
+    sta_config.sta.scan_method = WIFI_FAST_SCAN;
+    sta_config.sta.sort_method = WIFI_CONNECT_AP_BY_SIGNAL;
+    sta_config.sta.threshold.rssi = -127;
+    sta_config.sta.pmf_cfg.capable = true;
+    sta_config.sta.pmf_cfg.required = false;
+    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &sta_config));
+
+    ESP_ERROR_CHECK(esp_wifi_start());
+    vTaskDelay(200 / portTICK_PERIOD_MS);
+
+    esp_err_t ret = esp_wifi_connect();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "❌ Error en esp_wifi_connect() al probar nueva red: %s", esp_err_to_name(ret));
+    }
 }

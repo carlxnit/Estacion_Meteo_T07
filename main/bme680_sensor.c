@@ -66,83 +66,82 @@ static bme680_device_t bme680_dev = {
 
 static bme680_data_t last_sensor_data = {0};
 static uint8_t bme680_current_addr = BME680_ADDR;
+static i2c_master_bus_handle_t s_i2c_bus = NULL;
+static i2c_master_dev_handle_t s_bme680_dev = NULL;
+
+// Asocia (o reasocia) el handle de dispositivo I2C a la dirección dada
+static esp_err_t bme680_attach_device(uint8_t addr) {
+    if (s_bme680_dev) {
+        i2c_master_bus_rm_device(s_bme680_dev);
+        s_bme680_dev = NULL;
+    }
+
+    i2c_device_config_t dev_cfg = {
+        .dev_addr_length = I2C_ADDR_BIT_LEN_7,
+        .device_address = addr,
+        .scl_speed_hz = I2C_MASTER_FREQ_HZ,
+    };
+
+    return i2c_master_bus_add_device(s_i2c_bus, &dev_cfg, &s_bme680_dev);
+}
 
 // ==================== DIAGNÓSTICO I2C (TU CÓDIGO) ====================
 
 void i2c_diagnostic(void) {
     ESP_LOGI(TAG, "Iniciando diagnostico I2C completo...");
-    
+
     // 1. Escanear bus I2C completo
     ESP_LOGI(TAG, "Escaneando bus I2C...");
     int devices_found = 0;
-    
+
     for (int address = 1; address < 127; address++) {
-        i2c_cmd_handle_t cmd = i2c_cmd_link_create();
-        i2c_master_start(cmd);
-        i2c_master_write_byte(cmd, (address << 1) | I2C_MASTER_WRITE, true);
-        i2c_master_stop(cmd);
-        
-        esp_err_t ret = i2c_master_cmd_begin(I2C_MASTER_NUM, cmd, 50 / portTICK_PERIOD_MS);
-        i2c_cmd_link_delete(cmd);
-        
+        esp_err_t ret = i2c_master_probe(s_i2c_bus, address, 50);
+
         if (ret == ESP_OK) {
             ESP_LOGI(TAG, "Dispositivo encontrado en: 0x%02X", address);
             devices_found++;
         }
     }
-    
+
     if (devices_found == 0) {
         ESP_LOGE(TAG, "NO se encontraron dispositivos I2C. Verifica conexiones.");
     } else {
         ESP_LOGI(TAG, "Total dispositivos encontrados: %d", devices_found);
     }
-    
+
     // 2. Probar direcciones específicas del BME680
     uint8_t test_addresses[] = {0x76, 0x77};
     ESP_LOGI(TAG, "Probando direcciones especificas del BME680...");
-    
+
     for (int i = 0; i < sizeof(test_addresses)/sizeof(test_addresses[0]); i++) {
         ESP_LOGI(TAG, "Probando BME680 en: 0x%02X", test_addresses[i]);
-        
-        i2c_cmd_handle_t cmd = i2c_cmd_link_create();
-        i2c_master_start(cmd);
-        i2c_master_write_byte(cmd, (test_addresses[i] << 1) | I2C_MASTER_WRITE, true);
-        i2c_master_stop(cmd);
-        
-        esp_err_t ret = i2c_master_cmd_begin(I2C_MASTER_NUM, cmd, 100 / portTICK_PERIOD_MS);
-        i2c_cmd_link_delete(cmd);
-        
+
+        esp_err_t ret = i2c_master_probe(s_i2c_bus, test_addresses[i], 100);
+
         if (ret == ESP_OK) {
             ESP_LOGI(TAG, "BME680 RESPONDE en: 0x%02X", test_addresses[i]);
-            
+
             // Leer Chip ID para confirmar
-            uint8_t chip_id;
-            
-            i2c_cmd_handle_t cmd_read = i2c_cmd_link_create();
-            i2c_master_start(cmd_read);
-            i2c_master_write_byte(cmd_read, (test_addresses[i] << 1) | I2C_MASTER_WRITE, true);
-            i2c_master_write_byte(cmd_read, 0xD0, true);
-            i2c_master_start(cmd_read);
-            i2c_master_write_byte(cmd_read, (test_addresses[i] << 1) | I2C_MASTER_READ, true);
-            i2c_master_read_byte(cmd_read, &chip_id, I2C_MASTER_NACK);
-            i2c_master_stop(cmd_read);
-            
-            esp_err_t read_ret = i2c_master_cmd_begin(I2C_MASTER_NUM, cmd_read, 100 / portTICK_PERIOD_MS);
-            i2c_cmd_link_delete(cmd_read);
-            
-            if (read_ret == ESP_OK) {
-                ESP_LOGI(TAG, "Chip ID: 0x%02X", chip_id);
-                if (chip_id == 0x61) {
-                    ESP_LOGI(TAG, "CONFIRMADO: BME680 en 0x%02X", test_addresses[i]);
-                    bme680_current_addr = test_addresses[i];
+            uint8_t chip_id = 0;
+            uint8_t reg = 0xD0;
+
+            if (bme680_attach_device(test_addresses[i]) == ESP_OK) {
+                esp_err_t read_ret = i2c_master_transmit_receive(s_bme680_dev, &reg, 1, &chip_id, 1, 100);
+
+                if (read_ret == ESP_OK) {
+                    ESP_LOGI(TAG, "Chip ID: 0x%02X", chip_id);
+                    if (chip_id == 0x61) {
+                        ESP_LOGI(TAG, "CONFIRMADO: BME680 en 0x%02X", test_addresses[i]);
+                        bme680_current_addr = test_addresses[i];
+                    } else {
+                        ESP_LOGW(TAG, "Chip ID incorrecto. Esperado: 0x61");
+                    }
                 } else {
-                    ESP_LOGW(TAG, "Chip ID incorrecto. Esperado: 0x61");
+                    ESP_LOGE(TAG, "Error leyendo Chip ID: %s", esp_err_to_name(read_ret));
                 }
-            } else {
-                ESP_LOGE(TAG, "Error leyendo Chip ID: %s", esp_err_to_name(read_ret));
             }
         } else {
-            ESP_LOGW(TAG, "BME680 NO responde en: 0x%02X - Error: %s", 
+            ESP_LOGW(TAG, "BME680 NO responde en: 0x%02X - Error: %s",
                      test_addresses[i], esp_err_to_name(ret));
         }
         vTaskDelay(100 / portTICK_PERIOD_MS);
@@ -152,41 +151,18 @@ void i2c_diagnostic(void) {
 // ==================== FUNCIONES I2C BÁSICAS (TUS FUNCIONES) ====================
 
 static esp_err_t bme680_write_byte(uint8_t reg_addr, uint8_t data) {
-    i2c_cmd_handle_t cmd = i2c_cmd_link_create();
-    
-    i2c_master_start(cmd);
-    i2c_master_write_byte(cmd, (bme680_current_addr << 1) | I2C_MASTER_WRITE, true);
-    i2c_master_write_byte(cmd, reg_addr, true);
-    i2c_master_write_byte(cmd, data, true);
-    i2c_master_stop(cmd);
-    
-    esp_err_t ret = i2c_master_cmd_begin(I2C_MASTER_NUM, cmd, 1000 / portTICK_PERIOD_MS);
-    i2c_cmd_link_delete(cmd);
-    
-    return ret;
+    if (!s_bme680_dev) {
+        return ESP_FAIL;
+    }
+    uint8_t buf[2] = { reg_addr, data };
+    return i2c_master_transmit(s_bme680_dev, buf, sizeof(buf), 1000);
 }
 
 static esp_err_t bme680_read_bytes(uint8_t reg_addr, uint8_t *data, size_t len) {
-    i2c_cmd_handle_t cmd = i2c_cmd_link_create();
-    
-    i2c_master_start(cmd);
-    i2c_master_write_byte(cmd, (bme680_current_addr << 1) | I2C_MASTER_WRITE, true);
-    i2c_master_write_byte(cmd, reg_addr, true);
-    
-    i2c_master_start(cmd);
-    i2c_master_write_byte(cmd, (bme680_current_addr << 1) | I2C_MASTER_READ, true);
-    
-    if (len > 1) {
-        i2c_master_read(cmd, data, len - 1, I2C_MASTER_ACK);
+    if (!s_bme680_dev) {
+        return ESP_FAIL;
     }
-    i2c_master_read_byte(cmd, data + len - 1, I2C_MASTER_NACK);
-    
-    i2c_master_stop(cmd);
-    
-    esp_err_t ret = i2c_master_cmd_begin(I2C_MASTER_NUM, cmd, 1000 / portTICK_PERIOD_MS);
-    i2c_cmd_link_delete(cmd);
-    
-    return ret;
+    return i2c_master_transmit_receive(s_bme680_dev, &reg_addr, 1, data, len, 1000);
 }
 
 // ==================== NUEVAS FUNCIONES DE CONFIGURACIÓN (gschorcht) ====================
@@ -885,7 +861,7 @@ esp_err_t bme680_read_all_data(bme680_data_t *sensor_data) {
         sensor_data->pressure = bme680_compensate_pressure(press_adc);
     }
     
-    if (hum_adc == 0 || hum_adc > 0xFFFF) {
+    if (hum_adc == 0) {
         ESP_LOGW(TAG, "Advertencia: Valor ADC de humedad fuera de rango: %u", hum_adc);
         sensor_data->humidity = -1.0f;
     } else {
@@ -966,26 +942,29 @@ bool bme680_is_connected(void) {
 void bme680_init(void) {
     ESP_LOGI(TAG, "Inicializando BME680...");
     
-    i2c_config_t conf = {
-        .mode = I2C_MODE_MASTER,
+    i2c_master_bus_config_t bus_config = {
+        .i2c_port = I2C_MASTER_NUM,
         .sda_io_num = I2C_MASTER_SDA_IO,
         .scl_io_num = I2C_MASTER_SCL_IO,
-        .sda_pullup_en = GPIO_PULLUP_ENABLE,
-        .scl_pullup_en = GPIO_PULLUP_ENABLE,
-        .master.clk_speed = I2C_MASTER_FREQ_HZ,
+        .clk_source = I2C_CLK_SRC_DEFAULT,
+        .glitch_ignore_cnt = 7,
+        .flags.enable_internal_pullup = true,
     };
-    
-    ESP_ERROR_CHECK(i2c_param_config(I2C_MASTER_NUM, &conf));
-    ESP_ERROR_CHECK(i2c_driver_install(I2C_MASTER_NUM, conf.mode, 0, 0, 0));
-    
+
+    ESP_ERROR_CHECK(i2c_new_master_bus(&bus_config, &s_i2c_bus));
+
+    // Asociar el handle de dispositivo a la dirección por defecto;
+    // i2c_diagnostic() lo reasociará si detecta la otra dirección (0x76/0x77)
+    ESP_ERROR_CHECK(bme680_attach_device(bme680_current_addr));
+
     ESP_LOGI(TAG, "I2C inicializado correctamente");
-    
+
     // Pequeña pausa para estabilización
     vTaskDelay(1000 / portTICK_PERIOD_MS);
-    
+
     // Ejecutar diagnóstico completo (opcional)
     i2c_diagnostic();
-    
+
     // Intentar configurar sensor
     if (bme680_is_connected()) {
         if (bme680_configure_sensor() == ESP_OK) {

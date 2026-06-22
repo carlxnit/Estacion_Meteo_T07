@@ -33,8 +33,8 @@
 #include "esp_netif.h"
 #include "esp_wifi.h"
 #include "nvs_flash.h"
-#include "driver/i2c.h"
-#include "driver/adc.h"
+#include "driver/i2c_master.h"
+#include "esp_adc/adc_oneshot.h"
 
 // =============================================================================
 // INCLUDES DE COMUNICACIÓN
@@ -59,15 +59,18 @@
 #define THINGSBOARD_ACCESS_TOKEN  "om8tccnqiv43ukzaprgp"                 // Token de acceso ThingsBoard
 
 // OTA - Actualizaciones de firmware
+#define FIRMWARE_VERSION          "1.0.1"          // Versión actual del firmware (subir antes de publicar una nueva)
 #define GITHUB_FIRMWARE_URL       "https://raw.githubusercontent.com/carlxx2/Estacion_Meteo_T07/main/firmware/firmware.bin"
+#define GITHUB_VERSION_URL        "https://raw.githubusercontent.com/carlxx2/Estacion_Meteo_T07/main/firmware/version.txt"
+#define OTA_CHECK_INTERVAL_CYCLES 3                // PRUEBA: cada 3 ciclos (~30s). Volver a 60 para uso normal.
 
 // =============================================================================
 // CONFIGURACIÓN HARDWARE - ADC (SENSORES ANALÓGICOS)
 // =============================================================================
 
 // Canales ADC
-#define PLUVIOMETRO_ADC_CHANNEL   ADC1_CHANNEL_4   // GPIO32 - Pluviómetro
-#define ANEMOMETRO_ADC_CHANNEL    ADC1_CHANNEL_5   // GPIO33 - Anemómetro
+#define PLUVIOMETRO_ADC_CHANNEL   ADC_CHANNEL_4    // GPIO32 - Pluviómetro
+#define ANEMOMETRO_ADC_CHANNEL    ADC_CHANNEL_5    // GPIO33 - Anemómetro
 
 // Calibración Pluviómetro (voltaje → mm de lluvia)
 #define PLUVIOMETRO_MIN_VOLTAGE   0.1f             // Voltaje mínimo (0 mm)
@@ -230,6 +233,8 @@ void wifi_init_sta(void);                       // Inicializa conexión WiFi
 bool wifi_is_connected(void);                   // Verifica conexión WiFi activa
 bool wifi_is_ap_mode(void);                     // Verifica si está en modo AP
 const char* wifi_get_ap_ssid(void);             // Obtiene SSID del AP
+bool wifi_get_sta_ip(char *buf, size_t len);    // IP de la conexión STA actual
+void wifi_try_connect_async(const char *ssid, const char *password); // Prueba credenciales nuevas sin tirar el portal
 
 // -----------------------------------------------------------------------------
 // MÓDULO: MQTT Client (mqtt_client.c)
@@ -244,7 +249,8 @@ void mqtt_check_and_reconnect(void);              // Verifica y reconecta perió
 // -----------------------------------------------------------------------------
 // MÓDULO: OTA Updater (ota_updater.c)
 // -----------------------------------------------------------------------------
-void check_ota_updates(void);                   // Verifica y aplica actualizaciones OTA
+void check_ota_updates(void);                   // Verifica versión en GitHub y actualiza solo si hay una nueva
+bool ota_new_version_available(char *remote_version_out, size_t remote_version_size); // Comprueba sin actualizar
 
 // -----------------------------------------------------------------------------
 // MÓDULO: Sensor Reader (sensor_reader.c)

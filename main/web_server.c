@@ -392,50 +392,101 @@ static esp_err_t save_handler(httpd_req_t *req) {
         return ESP_FAIL;
     }
     
-    // Pagina de exito con redireccion automatica
-    char response[1024];
-    snprintf(response, sizeof(response), 
+    // Pagina con comprobacion en vivo: muestra un banner cuando el ESP32
+    // confirma la conexion a la nueva red (sin perder el portal mientras prueba)
+    char response[2048];
+    snprintf(response, sizeof(response),
              "<!DOCTYPE html>"
              "<html>"
              "<head>"
              "<meta charset='UTF-8'>"
              "<meta name='viewport' content='width=device-width, initial-scale=1.0'>"
-             "<meta http-equiv='refresh' content='3;url=/'>"
-             "<title>Configuracion Guardada</title>"
+             "<title>Conectando...</title>"
              "<style>"
              "body { font-family: Arial, sans-serif; text-align: center; padding: 50px; }"
-             ".success { color: green; font-size: 24px; }"
-             ".info { background: #d4edda; padding: 15px; margin: 20px; border-radius: 5px; }"
+             "#banner { display:none; font-size: 20px; padding: 15px; border-radius: 5px; margin-top: 20px; }"
+             ".ok { background:#d4edda; color:#155724; }"
+             ".err { background:#f8d7da; color:#721c24; }"
              "</style>"
              "</head>"
              "<body>"
-             "<h1 class='success'>Configuracion Guardada</h1>"
-             "<div class='info'>"
-             "<p><strong>SSID:</strong> %s</p>"
-             "<p><strong>Contrasena:</strong> %s</p>"
-             "</div>"
-             "<p>Redirigiendo a la pagina principal en 3 segundos...</p>"
-             "<p>Intentara conectar a: <strong>%s</strong></p>"
+             "<h1>Probando conexión a '%s'...</h1>"
+             "<p id='spinner'>Esperando confirmación del ESP32...</p>"
+             "<div id='banner'></div>"
+             "<script>"
+             "let tries = 0;"
+             "const ssid = '%s';"
+             "function poll() {"
+             "  tries++;"
+             "  fetch('/status').then(r => r.json()).then(d => {"
+             "    if (d.connected) {"
+             "      document.getElementById('spinner').style.display='none';"
+             "      const b = document.getElementById('banner');"
+             "      b.className = 'ok'; b.style.display = 'block';"
+             "      b.innerHTML = '✅ Conectado correctamente a la red \\'' + ssid + '\\' (IP: ' + d.ip + '). Reiniciando...';"
+             "      fetch('/restart', {method:'POST'});"
+             "    } else if (tries >= 20) {"
+             "      document.getElementById('spinner').style.display='none';"
+             "      const b = document.getElementById('banner');"
+             "      b.className = 'err'; b.style.display = 'block';"
+             "      b.innerHTML = '❌ No se pudo conectar a \\'' + ssid + '\\'. Verifica la contraseña e inténtalo de nuevo desde <a href=\"/\">aquí</a>.';"
+             "    } else {"
+             "      setTimeout(poll, 1000);"
+             "    }"
+             "  }).catch(() => setTimeout(poll, 1000));"
+             "}"
+             "setTimeout(poll, 1500);"
+             "</script>"
              "</body>"
              "</html>",
-             ssid, 
-             strlen(password) > 0 ? "********" : "(red abierta)",
-             ssid);
-    
+             ssid, ssid);
+
     httpd_resp_set_type(req, "text/html");
     httpd_resp_send(req, response, strlen(response));
-    
-    ESP_LOGI(TAG, "Configuracion guardada. Reiniciando para conectar...");
-    
-    // Pequena pausa para que se envie la respuesta
-    vTaskDelay(1000 / portTICK_PERIOD_MS);
-    
-    // Programar reinicio (dar mas tiempo para que el cliente vea el mensaje)
-    ESP_LOGI(TAG, "Programando reinicio en 2 segundos...");
-    vTaskDelay(2000 / portTICK_PERIOD_MS);
-    ESP_LOGI(TAG, "Reiniciando para aplicar configuracion WiFi...");
+
+    ESP_LOGI(TAG, "Credenciales guardadas. Probando conexión sin perder el portal...");
+    wifi_try_connect_async(ssid, password);
+
+    return ESP_OK;
+}
+
+/**
+ * @brief Handler de estado de conexión, consultado por la página de /save (/status)
+ */
+static esp_err_t status_handler(httpd_req_t *req) {
+    bool connected = wifi_is_connected();
+    char ip[32] = "";
+    if (connected) {
+        wifi_get_sta_ip(ip, sizeof(ip));
+    }
+
+    char response[160];
+    snprintf(response, sizeof(response),
+             "{\"connected\":%s,\"ip\":\"%s\"}",
+             connected ? "true" : "false", ip);
+
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, response, strlen(response));
+    return ESP_OK;
+}
+
+/**
+ * @brief Handler para reiniciar el ESP32 una vez confirmada la nueva conexión (/restart)
+ */
+static esp_err_t restart_handler(httpd_req_t *req) {
+    if (req->method != HTTP_POST) {
+        httpd_resp_send_err(req, HTTPD_405_METHOD_NOT_ALLOWED, "Metodo no permitido");
+        return ESP_FAIL;
+    }
+
+    const char *response = "{\"ok\":true}";
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, response, strlen(response));
+
+    ESP_LOGI(TAG, "Reinicio solicitado desde el portal tras conexión confirmada...");
+    vTaskDelay(500 / portTICK_PERIOD_MS);
     esp_restart();
-    
+
     return ESP_OK;
 }
 
@@ -553,11 +604,27 @@ void web_server_start(void) {
         .handler = delete_handler,
         .user_ctx = NULL
     };
-    
+
+    httpd_uri_t status_uri = {
+        .uri = "/status",
+        .method = HTTP_GET,
+        .handler = status_handler,
+        .user_ctx = NULL
+    };
+
+    httpd_uri_t restart_uri = {
+        .uri = "/restart",
+        .method = HTTP_POST,
+        .handler = restart_handler,
+        .user_ctx = NULL
+    };
+
     // Registrar todos los handlers
     httpd_register_uri_handler(web_server, &root_uri);
     httpd_register_uri_handler(web_server, &save_uri);
     httpd_register_uri_handler(web_server, &delete_uri);
+    httpd_register_uri_handler(web_server, &status_uri);
+    httpd_register_uri_handler(web_server, &restart_uri);
     
     ESP_LOGI(TAG, "Servidor web iniciado correctamente");
     ESP_LOGI(TAG, "URL: http://192.168.4.1");

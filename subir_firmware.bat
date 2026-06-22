@@ -1,4 +1,18 @@
 @echo off
+setlocal
+
+if "%~1"=="" (
+    echo Uso: subir_firmware.bat NUEVA_VERSION
+    echo Ejemplo: subir_firmware.bat 1.0.1
+    echo.
+    echo IMPORTANTE: antes de ejecutar esto, actualiza FIRMWARE_VERSION en
+    echo main/system_config.h al mismo valor y vuelve a compilar (idf.py build).
+    pause
+    exit /b 1
+)
+
+set NEW_VERSION=%~1
+
 echo Copiando firmware y subiendo a Git...
 
 :: Copiar el archivo binario
@@ -14,18 +28,22 @@ if exist firmware/firmware.bin (
     exit /b 1
 )
 
-:: Agregar el archivo específico a Git
-echo Agregando firmware/firmware.bin al repositorio...
-git add firmware/firmware.bin
+:: Escribir la nueva version en version.txt
+echo Actualizando firmware/version.txt a %NEW_VERSION%...
+echo %NEW_VERSION%> firmware/version.txt
 
-:: Hacer commit con mensaje fijo
+:: Agregar los archivos a Git
+echo Agregando firmware/firmware.bin y firmware/version.txt al repositorio...
+git add firmware/firmware.bin firmware/version.txt
+
+:: Hacer commit
 echo Haciendo commit...
-git commit -m "Firmware Update 2.0"
+git commit -m "Firmware update %NEW_VERSION%"
 
 :: Subir cambios
 echo Subiendo cambios al repositorio remoto...
 git push origin main
 
 echo ¡Proceso completado!
-echo Archivo firmware.bin subido correctamente.
+echo Firmware v%NEW_VERSION% subido correctamente.
 pause

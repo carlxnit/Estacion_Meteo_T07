@@ -379,6 +379,11 @@ void app_main(void) {
         
         // D. Tareas de mantenimiento
         show_system_report();
+
+        // D.1 Comprobar actualizaciones OTA periódicamente (solo si hay WiFi)
+        if (is_connected && sys_state.cycle_count % OTA_CHECK_INTERVAL_CYCLES == 0) {
+            check_ota_updates();
+        }
         
         // E. Actualizar estado anterior
         sys_state.was_connected = is_connected;
