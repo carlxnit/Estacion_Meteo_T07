@@ -38,7 +38,20 @@ typedef struct {
 
 static void system_initialize(void) {
     ESP_LOGI(TAG, "🚀 Iniciando Estación Meteorológica");
-    
+
+    // 0. Gestión de energía: permite que la CPU baje de frecuencia y entre en
+    // light-sleep automáticamente en los huecos de inactividad (tickless idle),
+    // sin afectar a WiFi/MQTT/portal, que siguen funcionando con normalidad.
+    esp_pm_config_t pm_config = {
+        .max_freq_mhz = 160,
+        .min_freq_mhz = 80,
+        .light_sleep_enable = true,
+    };
+    esp_err_t pm_ret = esp_pm_configure(&pm_config);
+    if (pm_ret != ESP_OK) {
+        ESP_LOGW(TAG, "⚠️  No se pudo configurar power management: %s", esp_err_to_name(pm_ret));
+    }
+
     // 1. Inicializar NVS
     ESP_LOGI(TAG, "📁 Inicializando NVS...");
     esp_err_t ret = nvs_flash_init();
@@ -46,7 +59,7 @@ static void system_initialize(void) {
         ESP_ERROR_CHECK(nvs_flash_erase());
         ESP_ERROR_CHECK(nvs_flash_init());
     }
-    
+
     vTaskDelay(1000 / portTICK_PERIOD_MS);
     
 	// 5. Inicializar WiFi

@@ -26,6 +26,7 @@
 #include "esp_ota_ops.h"
 #include "esp_crt_bundle.h"
 #include "esp_mac.h"
+#include "esp_pm.h"
 
 // =============================================================================
 // INCLUDES ESP-IDF PERIFÉRICOS
@@ -59,7 +60,7 @@
 #define THINGSBOARD_ACCESS_TOKEN  "om8tccnqiv43ukzaprgp"                 // Token de acceso ThingsBoard
 
 // OTA - Actualizaciones de firmware
-#define FIRMWARE_VERSION          "1.0.4"          // Versión actual del firmware (subir antes de publicar una nueva)
+#define FIRMWARE_VERSION          "1.0.6"          // Versión actual del firmware (subir antes de publicar una nueva)
 #define GITHUB_FIRMWARE_URL       "https://raw.githubusercontent.com/carlxnit/Estacion_Meteo_T07/main/firmware/firmware.bin"
 #define GITHUB_VERSION_URL        "https://raw.githubusercontent.com/carlxnit/Estacion_Meteo_T07/main/firmware/version.txt"
 #define OTA_CHECK_INTERVAL_CYCLES 60                // Cada cuántos ciclos del loop principal se comprueba OTA (~10 min con ciclos de 10s)

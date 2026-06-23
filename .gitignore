@@ -5,3 +5,6 @@ sdkconfig.old
 .cproject
 .project
 .settings/
+*.docx
+*.md
+*.pdf

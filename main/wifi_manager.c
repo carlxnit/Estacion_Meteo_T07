@@ -167,6 +167,12 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
         ESP_LOGI(TAG, "✅ WiFi conectado! IP: " IPSTR, IP2STR(&event->ip_info.ip));
         s_retry_num = 0;
 
+        // Ya conectados: pasar de "radio siempre despierto" (necesario para que
+        // la conexión inicial sea rápida y fiable) a modem-sleep, que apaga el
+        // radio WiFi entre balizas. Con nuestro ritmo de envío (~10s) la
+        // latencia añadida es imperceptible y el ahorro de consumo notable.
+        esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
+
         // Detener servidor web salvo que estemos probando credenciales nuevas
         // desde el portal: ahí lo necesitamos vivo para servir /status y /restart
         if (!s_testing_new_credentials && web_server_is_running()) {
